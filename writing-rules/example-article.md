@@ -1,472 +1,1521 @@
-[AWS Database Blog](https://aws.amazon.com/blogs/database/)
------------------------------------------------------------
+---
+title: Simple RAG with Letta
+subtitle: Manage retrieval on the client-side and inject context into your agent
+slug: guides/rag/simple
+---
 
- 
+In the Simple RAG approach, your application manages the retrieval process. You query your vector database, retrieve the relevant documents, and include them directly in the message you send to your Letta agent.
 
-Connect Amazon Bedrock Agents with Amazon Aurora PostgreSQL using Amazon RDS Data API
-=====================================================================================
+By the end of this tutorial, you'll have a research assistant that uses your vector database to answer questions about scientific papers.
 
-by Nihilson Gnanadason and Senthil Mohan on 23 MAY 2025 in [Advanced (300)](https://aws.amazon.com/blogs/database/category/learning-levels/advanced-300/ "View all posts in Advanced (300)"), [Amazon Aurora](https://aws.amazon.com/blogs/database/category/database/amazon-aurora/ "View all posts in Amazon Aurora"), [Amazon Bedrock](https://aws.amazon.com/blogs/database/category/artificial-intelligence/amazon-machine-learning/amazon-bedrock/ "View all posts in Amazon Bedrock"), [PostgreSQL compatible](https://aws.amazon.com/blogs/database/category/database/amazon-aurora/postgresql-compatible/ "View all posts in PostgreSQL compatible"), [Technical How-to](https://aws.amazon.com/blogs/database/category/post-types/technical-how-to/ "View all posts in Technical How-to") [Permalink](https://aws.amazon.com/blogs/database/connect-amazon-bedrock-agents-with-amazon-aurora-postgresql-using-amazon-rds-data-api/) [Comments](https://aws.amazon.com/blogs/database/connect-amazon-bedrock-agents-with-amazon-aurora-postgresql-using-amazon-rds-data-api/#Comments) [Share](#)
+## Prerequisites
 
-*   [](https://www.facebook.com/sharer/sharer.php?u=https://aws.amazon.com/blogs/database/connect-amazon-bedrock-agents-with-amazon-aurora-postgresql-using-amazon-rds-data-api/)
-*   [](https://twitter.com/intent/tweet/?text=Connect%20Amazon%20Bedrock%20Agents%20with%20Amazon%20Aurora%20PostgreSQL%20using%20Amazon%20RDS%20Data%20API&via=awscloud&url=https://aws.amazon.com/blogs/database/connect-amazon-bedrock-agents-with-amazon-aurora-postgresql-using-amazon-rds-data-api/)
-*   [](https://www.linkedin.com/shareArticle?mini=true&title=Connect%20Amazon%20Bedrock%20Agents%20with%20Amazon%20Aurora%20PostgreSQL%20using%20Amazon%20RDS%20Data%20API&source=Amazon%20Web%20Services&url=https://aws.amazon.com/blogs/database/connect-amazon-bedrock-agents-with-amazon-aurora-postgresql-using-amazon-rds-data-api/)
-*   [](mailto:?subject=Connect%20Amazon%20Bedrock%20Agents%20with%20Amazon%20Aurora%20PostgreSQL%20using%20Amazon%20RDS%20Data%20API&body=Connect%20Amazon%20Bedrock%20Agents%20with%20Amazon%20Aurora%20PostgreSQL%20using%20Amazon%20RDS%20Data%20API%0A%0Ahttps://aws.amazon.com/blogs/database/connect-amazon-bedrock-agents-with-amazon-aurora-postgresql-using-amazon-rds-data-api/)
-*   
+To follow along, you need free accounts for:
 
-[Generative artificial intelligence](https://aws.amazon.com/ai/generative-ai/) (AI) applications and relational databases are increasingly being used together to create new solutions across industries. The integration of these technologies allows organizations to use the vast amounts of structured data stored in relational databases to train and refine AI models. AI can then be used to generate insights, predict trends, and even augment database management tasks.
+- **[Letta](https://www.letta.com)** - To access the agent development platform
+- **[Hugging Face](https://huggingface.co/)** - For generating embeddings (MongoDB and Qdrant users only)
+- **One of the following vector databases:**
+  - **[ChromaDB Cloud](https://www.trychroma.com/)** for a hosted vector database
+  - **[MongoDB Atlas](https://www.mongodb.com/cloud/atlas/register)** for vector search with MongoDB
+  - **[Qdrant Cloud](https://cloud.qdrant.io/)** for a high-performance vector database
 
-In this post, we describe a solution to integrate generative AI applications with relational databases like [Amazon Aurora PostgreSQL-Compatible Edition](https://aws.amazon.com/rds/aurora/) using [RDS Data API](https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/data-api.html) (Data API) for simplified database interactions, [Amazon Bedrock](https://aws.amazon.com/bedrock) for AI model access, [Amazon Bedrock Agents](https://aws.amazon.com/bedrock/agents/) for task automation and [Amazon Bedrock Knowledge Bases](https://aws.amazon.com/bedrock/knowledge-bases/) for context information retrieval. Data API support is currently available only with Aurora databases. If you intend to use the solution with [Amazon Relational Database Service](https://aws.amazon.com/rds) (Amazon RDS), you can customize the integration using conventional database connectivity approaches.
+You will also need Python 3.8+ or Node.js v18+ and a code editor.
 
-Solution overview
------------------
+<Note>
+**MongoDB and Qdrant users:** This guide uses Hugging Face's Inference API for generating embeddings. This approach keeps the tool code lightweight enough to run in Letta's sandbox environment.
+</Note>
 
-This solution combines the AI capabilities of Amazon Bedrock Agents with the robust database functionality of Aurora PostgreSQL through the Data API. Amazon Bedrock Agents, powered by [large language models](https://aws.amazon.com/what-is/large-language-model/) (LLMs), interprets natural language queries and generates appropriate SQL statements using action groups fulfilled by [AWS Lambda](https://aws.amazon.com/lambda/) function and schema artifacts stored in [Amazon Simple Storage Service](https://aws.amazon.com/s3/) (Amazon S3). These queries are then run against Aurora PostgreSQL using the Data API, which provides a serverless, connection-free method for database interactions. This enables dynamic data retrieval and analysis without managing direct database connections. For instance, a user request to “show sales data for the last quarter” is transformed into SQL, run through the Data API, and the results are presented in a user-friendly format. The solution is represented in the following architecture diagram.
+## Getting Your API Keys
 
-![](https://d2908q01vomqb2.cloudfront.net/887309d048beef83ad3eabf2a79a64a389ab1c9f/2025/05/20/image-1-3.png)
+We'll need API keys for Letta and your chosen vector database.
 
-The detailed steps in this architecture are:
+<AccordionGroup>
+<Accordion title="Get your Letta API Key">
+<Steps>
+  <Step title="Create a Letta Account">
+    If you don't have one, sign up for a free account at [letta.com](https://www.letta.com).
+  </Step>
+  <Step title="Navigate to API Keys">
+    Once logged in, click on **API keys** in the sidebar.
+    ![Letta API Key Navigation](/images/letta-api-key-nav.png)
+  </Step>
+  <Step title="Create and Copy Your Key">
+    Click **+ Create API key**, give it a descriptive name, and click **Confirm**. Copy the key and save it somewhere safe.
+  </Step>
+</Steps>
+</Accordion>
 
-1.  The generative AI application invokes the Amazon Bedrock agent with natural language input data to orchestrate the integration with the backend relational database.
-2.  The agent invokes the foundational model (FM) on Amazon Bedrock for pre-processing the prompt to determine the actions to be taken.
-3.  The agent then decides to use the generate-query action group.
-4.  The agent invokes the `/generate` API implemented by the Lambda function.
-5.  The Lambda function uses the schema artifacts from the Amazon S3 bucket as context to augment the prompt.
-6.  The Lambda function then invokes an LLM on Amazon Bedrock to generate the SQL query and returns the generated SQL query back to the agent.
-7.  The agent then decides to use the execute-query action group.
-8.  The agent invokes the /execute API implemented by the Lambda function, passing the generated SQL query.
-9.  The Lambda function use Data API with a read-only role to run the SQL query against the Aurora PostgreSQL database.
-10.  The agent finally returns the formatted query results to the application.
+<Accordion title="Get your ChromaDB Cloud credentials">
+<Steps>
+  <Step title="Create a ChromaDB Cloud Account">
+    Sign up for a free account on the [ChromaDB Cloud website](https://www.trychroma.com/).
+  </Step>
+  <Step title="Create a New Database">
+    From your dashboard, create a new database.
+    ![ChromaDB New Project](/images/chroma-new-project.png)
+  </Step>
+  <Step title="Get Your API Key and Host">
+    In your project settings, you'll find your **API Key**, **Tenant**, **Database**, and **Host URL**. We'll need all of these for our scripts.
+    ![ChromaDB Keys](/images/chroma-keys.png)
+  </Step>
+</Steps>
+</Accordion>
 
-While the solution can technically support write operations, allowing AI generated queries to modify the database presents significant risks to data integrity and security. Therefore, production implementations should allow access to read-only operations through proper IAM policies and database role permissions. From a security and data integrity perspective, we strongly recommend implementing this solution exclusively for read-only workloads such as analytics, reporting, and data exploration.
+<Accordion title="Get your MongoDB Atlas credentials">
+<Steps>
+  <Step title="Create a MongoDB Atlas Account">
+    Sign up for a free account at [mongodb.com/cloud/atlas/register](https://www.mongodb.com/cloud/atlas/register).
+  </Step>
+  <Step title="Create a Free Cluster">
+    Click **Build a Cluster** and select the free tier (M0). Choose your preferred cloud provider and region and click **Create deployment**.
+    ![Create MongoDB Cluster](/images/create-cluster-mongodb.png)
+  </Step>
+  <Step title="Set Up Database Access">
+    Next, set up connection security.
+    1. Create a database user, then click **Choose a connection method**
+    2. Choose **Drivers** to connect to your application, choose Python as the driver.
+    3. Copy the **entire** connection string, including the query parameters at the end. It will look like this:
 
-Security guardrails
--------------------
+    ```
+    mongodb+srv://<username>:<password>@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0
+    ```
 
-The solution implements multiple layers of security controls to ensure safe and controlled access to the database. These layered security controls ensure that the solution maintains data integrity while providing the desired natural language query capabilities:
+    <Note>
+    Make sure to replace `<password>` with your actual database user password. Keep all the query parameters (`?retryWrites=true&w=majority&appName=Cluster0`) they are required for proper connection configuration.
+    </Note>
+    ![MongoDB Connection String](/images/connection-string-mongodb.png)
+  </Step>
+  <Step title="Configure Network Access (IP Whitelist)">
+    By default, MongoDB Atlas blocks all outside connections. You must grant access to the services that need to connect.
 
-*   **Agent-level instructions:** The Bedrock agents are explicitly configured to support only read-only operations. Instructions embedded in the agent’s prompt prevent it from generating queries that could modify the database (INSERT, UPDATE, DELETE).
-    
-        You are a SQL query assistant that helps users interact with a PostgreSQL database. 
-        You can generate read only (SELECT) SQL queries 
-        based on natural language prompts and execute queries against the database. 
-        Do not generate SQL queries that can modify or update 
-        any underlying data or schema in the database. 
-        Always validate queries for security before execution. 
-        Use the generate-query action to create SQL queries 
-        and the execute-query action to run them.
-    
-    Code
-    
-*   **Action group validation**: The generate-query function implements additional validation of user input to prevent injection attacks and unauthorized operations. The execute-query function validates the generated SQL queries against an allowlist of operations and syntax patterns. Both functions work in tandem to make sure query safety before they are run.
-*   **Read-only database access**: Database interactions are exclusively performed using a read-only role (configured via READONLY\_SECRET\_ARN). This provides a critical security boundary at the database level, preventing any potential write operations even if other controls fail.
-*   **Bedrock guardrails**: Additional security is implemented through [Amazon Bedrock Guardrails](https://aws.amazon.com/bedrock/guardrails/) features. This further allows filtering of specific words or phrases like INSERT, UPDATE, DELETE from user prompts to prevent potentially harmful or unauthorized requests before they reach the query generation stage.
+    1. Navigate to **Database and Network Access** in the left sidebar.
+    2. Click **Add IP Address**.
+    3. For local development and testing, select **Allow Access From Anywhere**. This will add the IP address `0.0.0.0/0`.
+    4. Click **Confirm**.
 
-Prerequisites
--------------
+    ![MongoDB IP Configuration](/images/ip-config-mongodb.png)
 
-To follow along with the steps in this post, you need the following resources.
+    <Note>
+    For a production environment, you would replace `0.0.0.0/0` with a secure list of static IP addresses provided by your hosting service (e.g., Letta).
+    </Note>
+  </Step>
+</Steps>
+</Accordion>
 
-*   An AWS account with [AWS Identity and Access Management](https://aws.amazon.com/iam/) (IAM) permissions to create an Aurora PostgreSQL database and Amazon Bedrock.
-*   An integrated development environment (IDE) such as Visual Studio Code.
-*   Python installed with the [Boto3](https://boto3.amazonaws.com/v1/documentation/api/latest/guide/quickstart.html) library on your IDE.
-*   [AWS Cloud Development Kit](https://docs.aws.amazon.com/cdk/v2/guide/getting-started.html#getting_started_install) (AWS CDK) installed on your IDE.
+<Accordion title="Get your Qdrant Cloud credentials">
+<Steps>
+  <Step title="Create a Qdrant Cloud Account">
+    Sign up for a free account at [cloud.qdrant.io](https://cloud.qdrant.io/).
+  </Step>
+  <Step title="Create a New Cluster">
+    From your dashboard, click **Clusters** and then **+ Create**. Select the free tier and choose your preferred region.
 
-Clone the sample Python project from the AWS Samples [repository](https://github.com/aws-samples/sample-to-connect-bedrock-agent-with-aurora) and follow the development environment setup instructions in the readme:
+    ![Create Qdrant Cluster](/images/qdrant-create-cluster.png)
+  </Step>
+  <Step title="Get Your API Key and URL">
+    Once your cluster is created, click on it to view details.
 
-    git clone https://github.com/aws-samples/sample-to-connect-bedrock-agent-with-aurora
-    cd sample-to-connect-bedrock-agent-with-aurora
+    Copy the following:
 
-Code
+    1. **API Key**
+    2. **Cluster URL**
 
-**Setting up the database environment**
----------------------------------------
+    ![Qdrant Connection Details](/images/qdrant-connection-details.png)
+  </Step>
+</Steps>
+</Accordion>
 
-You begin by deploying an Aurora PostgreSQL cluster using the AWS CDK. To deploy the database infrastructure, run the command:
+<Accordion title="Get your Hugging Face API Token (MongoDB & Qdrant users)">
+<Steps>
+  <Step title="Create a Hugging Face Account">
+    Sign up for a free account at [huggingface.co](https://huggingface.co/join).
+  </Step>
+  <Step title="Create Access Token">
+    Click the profile icon in the top right. Navigate to **Settings** > **Access Tokens** (or go directly to [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)).
+  </Step>
+  <Step title="Generate New Token">
+    Click **New token**, give it a name (e.g., "Letta RAG Demo"), select **Read** role, and click **Create token**. Copy the token and save it securely.
+    ![Hugging Face Token](/images/hf-token.png)
+  </Step>
+</Steps>
 
-    cdk deploy RDSAuroraStack
+<Note>
+The free tier includes 30,000 API requests per month, which is more than enough for development and testing.
+</Note>
+</Accordion>
+</AccordionGroup>
 
-Bash
+Once you have these credentials, create a `.env` file in your project directory. Add the credentials for your chosen database:
 
-The RDSAuroraStack is an AWS CDK construct that provisions an Aurora PostgreSQL Serverless v2 database in a secure VPC environment. It creates a dedicated VPC with public and private subnets, sets up security groups, and manages database credentials through AWS Secrets Manager. The stack also implements a custom Lambda-based solution to create a read-only database user with appropriate permissions, making it suitable for applications that need segregated database access levels, such as connecting Amazon Bedrock agents to Aurora PostgreSQL databases.
+<Tabs>
+  <Tab title="ChromaDB" language="chromadb">
+```bash
+LETTA_API_KEY="..."
+CHROMA_API_KEY="..."
+CHROMA_TENANT="..."
+CHROMA_DATABASE="..."
+```
+  </Tab>
+  <Tab title="MongoDB Atlas" language="mongo">
+```bash
+LETTA_API_KEY="..."
+MONGODB_URI="mongodb+srv://username:password@cluster0.xxxxx.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+MONGODB_DB_NAME="rag_demo"
+HF_API_KEY="..."
+```
+  </Tab>
+  <Tab title="Qdrant" language="qdrant">
+```bash
+LETTA_API_KEY="..."
+QDRANT_URL="https://xxxxx.cloud.qdrant.io"
+QDRANT_API_KEY="..."
+HF_API_KEY="..."
+```
+  </Tab>
+</Tabs>
 
-**Deploy the agent**
---------------------
+## Step 1: Set Up the Vector Database
 
-Agents orchestrate interactions between [foundation models](https://aws.amazon.com/what-is/foundation-models/) (FMs), data sources, software applications, and user conversations. Also, agents can automatically call APIs to take actions and invoke [Amazon Bedrock Knowledge Bases](https://aws.amazon.com/bedrock/knowledge-bases/) to augment with contextual information. Integrating the agent with Amazon Aurora, you gain the ability to transform natural language inputs into precise SQL queries using generative AI capabilities. Deploy the agent using the AWS CDK command:
+First, we need to populate your chosen vector database with the content of the research papers. We'll use two papers for this demo: ["Attention Is All You Need"](https://arxiv.org/abs/1706.03762) and ["BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding"](https://arxiv.org/abs/1810.04805).
 
-    cdk deploy BedrockAgentStack
+Before we begin, let's create a virtual environment to keep our dependencies isolated:
 
-Bash
+<Tabs>
+<Tab title="Python" language="python">
+Before we begin, let's create a Python virtual environment to keep our dependencies isolated:
 
-The BedrockAgentStack is an AWS CDK construct that creates an Amazon Bedrock agent designed to interact with an Aurora PostgreSQL database through natural language queries. It provisions a Lambda function that can generate and execute SQL queries, implements a comprehensive guardrail system to prevent data modification operations (allowing only SELECT queries), and establishes the necessary IAM roles and permissions for secure communication between Bedrock and Aurora. The stack creates two action groups—one for generating SQL queries from natural language prompts and another for executing those queries—while integrating with the previously deployed Aurora PostgreSQL database using Data API.
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows, use: venv\Scripts\activate
+```
+</Tab>
+<Tab title="Typescript" language="typescript">
+Before we begin, let's create a new Node.js project:
 
-After the CDK stack is deployed, you can switch to the Bedrock Agent builder console to review the configurations of the `query-agent` as shown in the following screenshot.
+```bash
+npm init -y
+```
 
-![](https://d2908q01vomqb2.cloudfront.net/887309d048beef83ad3eabf2a79a64a389ab1c9f/2025/05/20/image-2-3.png)
+This will create a `package.json` file for you.
 
-You will first notice that the agent is configured to use Anthropic’s Claude LLM. Next, from the Agent builder console examine the agent’s instructions because they define the agent’s functionality. The agent also features two key [action groups](https://docs.aws.amazon.com/bedrock/latest/userguide/agents-action-create.html): `generate-sql-query` and `execute-sql-query`. An action group is a logical collection of related functions (actions) that an agent can perform to accomplish specific tasks. The `generate-sql-query` group invokes the `generate-query` Lambda function, accepting the input user question, and returns the generated SQL query. The `execute-sql-query` group invokes the `execute-query` Lambda function, accepting the query and parameter values. We explore these functions in the next sections.
+Next, create a `tsconfig.json` file for TypeScript configuration:
 
-### The generate-query function
+```json
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": true
+  }
+}
+```
 
-The `generate_sql_query` function uses an LLM to create SQL queries from natural language questions and a provided database schema. The function uses a detailed prompt containing instructions for SQL generation, the database schema, and example question-SQL pairs. It then formats this prompt and the user’s question into a structured input for the LLM. The function proceeds to call an `invoke_llm` method to obtain a response from the LLM. The SQL query is then extracted from the LLM’s output and returned. This method enables dynamic SQL generation based on natural language input while providing the LLM with necessary context about the database structure for accurate query creation. The following code shows the prompt used to invoke the LLM.
+Update your `package.json` to use ES modules by adding this line:
 
-    def generate_sql_query(question):
-        validated_question = validate_input(question)
-        schema_content = read_schema_file()
-        
-        # Construct the prompt with schema context
-        contexts = f"""
-        <Instructions>
-            Read database schema inside the <database_schema></database_schema> tags which contains the tables and schema information to do the following:
-            1. Create a syntactically correct SQL query to answer the question.
-            2. Format the query to remove any new line with space and produce a single line query.
-            3. Never query for all the columns from a specific table, only ask for a few relevant columns given the question.
-            4. Pay attention to use only the column names that you can see in the schema description. 
-            5. Be careful to not query for columns that do not exist. 
-            6. Pay attention to which column is in which table. 
-            7. Qualify column names with the table name when needed.
-            8. Return only the sql query without any tags.
-        </Instructions>
-        <database_schema>{schema_content}</database_schema>
-        <examples>
-        <question>"How many users do we have?"</question>
-        <sql>SELECT SUM(users) FROM customers</sql>
-        <question>"How many users do we have for Mobile?"</question>
-        <sql>SELECT SUM(users) FROM customer WHERE source_medium='Mobile'</sql>
-        </examples>
-        <question>{validated_question}</question>
-        Return only the SQL query without any explanations.
-        """
-        prompt = f"""
-        Human: Use the following pieces of context to provide a concise answer to the question at the end. If you don't know the answer, just say that you don't know, don't try to make up an answer.
-        <context>
-        {contexts}
-        </context
-        Question: {validated_question}
-        Assistant:
-        """
-        messages = [
+```json
+"type": "module"
+```
+</Tab>
+</Tabs>
+
+Download the research papers using curl with the `-L` flag to follow redirects:
+
+```
+curl -L -o 1706.03762.pdf https://arxiv.org/pdf/1706.03762.pdf
+curl -L -o 1810.04805.pdf https://arxiv.org/pdf/1810.04805.pdf
+```
+
+Verify the PDFs downloaded correctly:
+
+```
+file 1706.03762.pdf 1810.04805.pdf
+```
+
+You should see output indicating these are PDF documents, not HTML files.
+
+Install the necessary packages for your chosen database:
+
+<Tabs>
+  <Tab title="ChromaDB" language="chromadb">
+<CodeBlocks>
+```txt title="Python"
+# requirements.txt
+letta-client
+chromadb
+pypdf
+python-dotenv
+```
+
+```bash title="TypeScript"
+npm install @letta-ai/letta-client chromadb @chroma-core/default-embed dotenv pdf-ts
+npm install --save-dev typescript @types/node ts-node tsx
+```
+</CodeBlocks>
+
+<Warning>
+**TypeScript installation issue:** If you encounter errors during installation (particularly with the `sharp` dependency), try installing with prebuilt binaries:
+
+```bash
+rm -rf node_modules package-lock.json
+npm install @letta-ai/letta-client chromadb @chroma-core/default-embed dotenv pdf-ts sharp --ignore-scripts
+npm install --save-dev typescript @types/node ts-node tsx
+```
+</Warning>
+
+For Python, install with:
+```bash
+pip install -r requirements.txt
+```
+  </Tab>
+
+  <Tab title="MongoDB Atlas" language="mongo">
+<CodeBlocks>
+```txt title="Python"
+# requirements.txt
+letta-client
+pymongo
+pypdf
+python-dotenv
+requests
+certifi
+dnspython
+```
+
+```bash title="TypeScript"
+npm install @letta-ai/letta-client mongodb dotenv pdf-ts node-fetch
+npm install --save-dev typescript @types/node ts-node tsx
+```
+</CodeBlocks>
+
+For Python, install with:
+```bash
+pip install -r requirements.txt
+```
+  </Tab>
+
+  <Tab title="Qdrant" language="qdrant">
+<CodeBlocks>
+```txt title="Python"
+# requirements.txt
+letta-client
+qdrant-client
+pypdf
+python-dotenv
+requests
+```
+
+```bash title="TypeScript"
+npm install @letta-ai/letta-client @qdrant/js-client-rest dotenv node-fetch pdf-ts
+npm install --save-dev typescript @types/node ts-node tsx
+```
+</CodeBlocks>
+
+For Python, install with:
+```bash
+pip install -r requirements.txt
+```
+  </Tab>
+</Tabs>
+
+Now create a `setup.py` or `setup.ts` file to load the PDFs, split them into chunks, and ingest them into your database:
+
+<Tabs>
+  <Tab title="ChromaDB" language="chromadb">
+<CodeBlocks>
+```python title="Python"
+import os
+import chromadb
+import pypdf
+from dotenv import load_dotenv
+
+load_dotenv()
+
+def main():
+    # Connect to ChromaDB Cloud
+    client = chromadb.CloudClient(
+        tenant=os.getenv("CHROMA_TENANT"),
+        database=os.getenv("CHROMA_DATABASE"),
+        api_key=os.getenv("CHROMA_API_KEY")
+    )
+
+    # Create or get the collection
+    collection = client.get_or_create_collection("rag_collection")
+
+    # Ingest PDFs
+    pdf_files = ["1706.03762.pdf", "1810.04805.pdf"]
+    for pdf_file in pdf_files:
+        print(f"Ingesting {pdf_file}...")
+        reader = pypdf.PdfReader(pdf_file)
+        for i, page in enumerate(reader.pages):
+            text = page.extract_text()
+            if text:
+                collection.add(
+                    ids=[f"{pdf_file}-{i}"],
+                    documents=[text]
+                )
+
+    print("\nIngestion complete!")
+    print(f"Total documents in collection: {collection.count()}")
+
+if __name__ == "__main__":
+    main()
+```
+
+```typescript title="TypeScript"
+import { CloudClient } from 'chromadb';
+import { DefaultEmbeddingFunction } from '@chroma-core/default-embed';
+import * as dotenv from 'dotenv';
+import * as path from 'path';
+import * as fs from 'fs';
+import { pdfToPages } from 'pdf-ts';
+
+dotenv.config();
+
+async function main() {
+    // Connect to ChromaDB Cloud
+    const client = new CloudClient({
+        apiKey: process.env.CHROMA_API_KEY || '',
+        tenant: process.env.CHROMA_TENANT || '',
+        database: process.env.CHROMA_DATABASE || ''
+    });
+
+    // Create embedding function
+    const embedder = new DefaultEmbeddingFunction();
+
+    // Create or get the collection
+    const collection = await client.getOrCreateCollection({
+        name: 'rag_collection',
+        embeddingFunction: embedder
+    });
+
+    // Ingest PDFs
+    const pdfFiles = ['1706.03762.pdf', '1810.04805.pdf'];
+
+    for (const pdfFile of pdfFiles) {
+        console.log(`Ingesting ${pdfFile}...`);
+        const pdfPath = path.join(__dirname, pdfFile);
+        const dataBuffer = fs.readFileSync(pdfPath);
+
+        const pages = await pdfToPages(dataBuffer);
+
+        for (let i = 0; i < pages.length; i++) {
+            const text = pages[i].text.trim();
+            if (text) {
+                await collection.add({
+                    ids: [`${pdfFile}-${i}`],
+                    documents: [text]
+                });
+            }
+        }
+    }
+
+    console.log('\nIngestion complete!');
+    const count = await collection.count();
+    console.log(`Total documents in collection: ${count}`);
+}
+
+main().catch(console.error);
+```
+</CodeBlocks>
+  </Tab>
+
+  <Tab title="MongoDB Atlas" language="mongo">
+<CodeBlocks>
+```python title="Python"
+import os
+import pymongo
+import pypdf
+import requests
+import certifi
+from dotenv import load_dotenv
+
+load_dotenv()
+
+def get_embedding(text, api_key):
+    """Get embedding from Hugging Face Inference API"""
+    API_URL = "https://router.huggingface.co/hf-inference/models/BAAI/bge-small-en-v1.5"
+    headers = {"Authorization": f"Bearer {api_key}"}
+
+    response = requests.post(API_URL, headers=headers, json={"inputs": [text], "options": {"wait_for_model": True}})
+
+    if response.status_code == 200:
+        return response.json()[0]
+    else:
+        raise Exception(f"HF API error: {response.status_code} - {response.text}")
+
+def main():
+    hf_api_key = os.getenv("HF_API_KEY")
+    mongodb_uri = os.getenv("MONGODB_URI")
+    db_name = os.getenv("MONGODB_DB_NAME")
+
+    if not all([hf_api_key, mongodb_uri, db_name]):
+        print("Error: Ensure HF_API_KEY, MONGODB_URI, and MONGODB_DB_NAME are in .env file")
+        return
+
+    # Connect to MongoDB Atlas using certifi
+    client = pymongo.MongoClient(mongodb_uri, tlsCAFile=certifi.where())
+    db = client[db_name]
+    collection = db["rag_collection"]
+
+    # Ingest PDFs
+    pdf_files = ["1706.03762.pdf", "1810.04805.pdf"]
+    for pdf_file in pdf_files:
+        print(f"Ingesting {pdf_file}...")
+        reader = pypdf.PdfReader(pdf_file)
+        for i, page in enumerate(reader.pages):
+            text = page.extract_text()
+            if not text: # Skip empty pages
+                continue
+
+            # Generate embedding using Hugging Face
+            print(f"  Processing page {i+1}...")
+            try:
+                embedding = get_embedding(text, hf_api_key)
+                collection.insert_one({
+                    "_id": f"{pdf_file}-{i}",
+                    "text": text,
+                    "embedding": embedding,
+                    "source": pdf_file,
+                    "page": i
+                })
+            except Exception as e:
+                print(f"    Could not process page {i+1}: {e}")
+
+
+    print("\nIngestion complete!")
+    print(f"Total documents in collection: {collection.count_documents({})}")
+
+    # Create vector search index
+    print("\nNext: Go to your MongoDB Atlas dashboard and create a search index named 'vector_index'")
+    print('''{
+  "fields": [
+    {
+      "type": "vector",
+      "path": "embedding",
+      "numDimensions": 384,
+      "similarity": "cosine"
+    }
+  ]
+}''')
+
+if __name__ == "__main__":
+    main()
+```
+
+```typescript title="TypeScript"
+import { MongoClient } from 'mongodb';
+import * as dotenv from 'dotenv';
+import { pdfToPages } from 'pdf-ts';
+import * as fs from 'fs';
+import fetch from 'node-fetch';
+
+dotenv.config();
+
+async function getEmbedding(text: string, apiKey: string): Promise<number[]> {
+    const API_URL = "https://router.huggingface.co/hf-inference/models/BAAI/bge-small-en-v1.5";
+    const headers = {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+    };
+
+    const response = await fetch(API_URL, {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify({
+            inputs: [text],
+            options: { wait_for_model: true }
+        })
+    });
+
+    if (response.ok) {
+        const result: any = await response.json();
+        return result[0];
+    } else {
+        const errorText = await response.text();
+        throw new Error(`HF API error: ${response.status} - ${errorText}`);
+    }
+}
+
+async function main() {
+    const hfApiKey = process.env.HF_API_KEY || '';
+    const mongoUri = process.env.MONGODB_URI || '';
+    const dbName = process.env.MONGODB_DB_NAME || '';
+
+    if (!hfApiKey || !mongoUri || !dbName) {
+        console.error('Error: Ensure HF_API_KEY, MONGODB_URI, and MONGODB_DB_NAME are in .env file');
+        return;
+    }
+
+    // Connect to MongoDB Atlas
+    const client = new MongoClient(mongoUri);
+
+    try {
+        await client.connect();
+        console.log('Connected to MongoDB Atlas');
+
+        const db = client.db(dbName);
+        const collection = db.collection('rag_collection');
+
+        // Ingest PDFs
+        const pdfFiles = ['1706.03762.pdf', '1810.04805.pdf'];
+
+        for (const pdfFile of pdfFiles) {
+            console.log(`Ingesting ${pdfFile}...`);
+
+            const dataBuffer = fs.readFileSync(pdfFile);
+            const pages = await pdfToPages(dataBuffer);
+
+            for (let i = 0; i < pages.length; i++) {
+                const text = pages[i].text;
+
+                if (!text || text.trim().length === 0) {
+                    continue; // Skip empty pages
+                }
+
+                // Generate embedding using Hugging Face
+                console.log(`  Processing page ${i + 1}...`);
+                try {
+                    const embedding = await getEmbedding(text, hfApiKey);
+
+                    await collection.insertOne({
+                        _id: `${pdfFile}-${i}`,
+                        text: text,
+                        embedding: embedding,
+                        source: pdfFile,
+                        page: i
+                    });
+                } catch (error) {
+                    console.log(`    Could not process page ${i + 1}: ${error}`);
+                }
+            }
+        }
+
+        const docCount = await collection.countDocuments({});
+        console.log('\nIngestion complete!');
+        console.log(`Total documents in collection: ${docCount}`);
+
+        console.log('\nNext: Go to your MongoDB Atlas dashboard and create a search index named "vector_index"');
+        console.log(JSON.stringify({
+            "fields": [
+                {
+                    "type": "vector",
+                    "path": "embedding",
+                    "numDimensions": 384,
+                    "similarity": "cosine"
+                }
+            ]
+        }, null, 2));
+
+    } catch (error) {
+        console.error('Error:', error);
+    } finally {
+        await client.close();
+    }
+}
+
+main();
+```
+</CodeBlocks>
+  </Tab>
+
+  <Tab title="Qdrant" language="qdrant">
+<CodeBlocks>
+```python title="Python"
+import os
+import pypdf
+import requests
+from dotenv import load_dotenv
+from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, VectorParams, PointStruct
+
+load_dotenv()
+
+def get_embedding(text, api_key):
+    """Get embedding from Hugging Face Inference API"""
+    API_URL = "https://router.huggingface.co/hf-inference/models/BAAI/bge-small-en-v1.5"
+    headers = {"Authorization": f"Bearer {api_key}"}
+
+    response = requests.post(API_URL, headers=headers, json={"inputs": text, "options": {"wait_for_model": True}})
+
+    if response.status_code == 200:
+        return response.json()
+    else:
+        raise Exception(f"HF API error: {response.status_code} - {response.text}")
+
+def main():
+    hf_api_key = os.getenv("HF_API_KEY")
+
+    if not hf_api_key:
+        print("Error: HF_API_KEY not found in .env file")
+        return
+
+    # Connect to Qdrant Cloud
+    client = QdrantClient(
+        url=os.getenv("QDRANT_URL"),
+        api_key=os.getenv("QDRANT_API_KEY")
+    )
+
+    # Create collection
+    collection_name = "rag_collection"
+
+    # Check if collection exists, if not create it
+    collections = client.get_collections().collections
+    if collection_name not in [c.name for c in collections]:
+        client.create_collection(
+            collection_name=collection_name,
+            vectors_config=VectorParams(size=384, distance=Distance.COSINE)
+        )
+
+    # Ingest PDFs
+    pdf_files = ["1706.03762.pdf", "1810.04805.pdf"]
+    point_id = 0
+
+    for pdf_file in pdf_files:
+        print(f"Ingesting {pdf_file}...")
+        reader = pypdf.PdfReader(pdf_file)
+        for i, page in enumerate(reader.pages):
+            text = page.extract_text()
+
+            # Generate embedding using Hugging Face
+            print(f"  Processing page {i+1}...")
+            embedding = get_embedding(text, hf_api_key)
+
+            client.upsert(
+                collection_name=collection_name,
+                points=[
+                    PointStruct(
+                        id=point_id,
+                        vector=embedding,
+                        payload={"text": text, "source": pdf_file, "page": i}
+                    )
+                ]
+            )
+            point_id += 1
+
+    print("\nIngestion complete!")
+    collection_info = client.get_collection(collection_name)
+    print(f"Total documents in collection: {collection_info.points_count}")
+
+if __name__ == "__main__":
+    main()
+```
+
+```typescript title="TypeScript"
+import { QdrantClient } from '@qdrant/js-client-rest';
+import { pdfToPages } from 'pdf-ts';
+import dotenv from 'dotenv';
+import fetch from 'node-fetch';
+import * as fs from 'fs';
+
+dotenv.config();
+
+async function getEmbedding(text: string, apiKey: string): Promise<number[]> {
+    const API_URL = "https://router.huggingface.co/hf-inference/models/BAAI/bge-small-en-v1.5";
+
+    const response = await fetch(API_URL, {
+        method: 'POST',
+        headers: {
+            "Authorization": `Bearer ${apiKey}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            inputs: [text],
+            options: { wait_for_model: true }
+        })
+    });
+
+    if (response.ok) {
+        const result: any = await response.json();
+        return result[0];
+    } else {
+        const error = await response.text();
+        throw new Error(`HuggingFace API error: ${response.status} - ${error}`);
+    }
+}
+
+async function main() {
+    const hfApiKey = process.env.HF_API_KEY || '';
+
+    if (!hfApiKey) {
+        console.error('Error: HF_API_KEY not found in .env file');
+        return;
+    }
+
+    // Connect to Qdrant Cloud
+    const client = new QdrantClient({
+        url: process.env.QDRANT_URL || '',
+        apiKey: process.env.QDRANT_API_KEY || ''
+    });
+
+    const collectionName = 'rag_collection';
+
+    // Check if collection exists, if not create it
+    const collections = await client.getCollections();
+    const collectionExists = collections.collections.some(c => c.name === collectionName);
+
+    if (!collectionExists) {
+        console.log('Creating collection...');
+        await client.createCollection(collectionName, {
+            vectors: {
+                size: 384,
+                distance: 'Cosine'
+            }
+        });
+    }
+
+    // Ingest PDFs
+    const pdfFiles = ['1706.03762.pdf', '1810.04805.pdf'];
+    let pointId = 0;
+
+    for (const pdfFile of pdfFiles) {
+        console.log(`\nIngesting ${pdfFile}...`);
+        const dataBuffer = fs.readFileSync(pdfFile);
+        const pages = await pdfToPages(dataBuffer);
+
+        for (let i = 0; i < pages.length; i++) {
+            const text = pages[i].text;
+
+            console.log(`  Processing page ${i + 1}...`);
+            const embedding = await getEmbedding(text, hfApiKey);
+
+            await client.upsert(collectionName, {
+                wait: true,
+                points: [
+                    {
+                        id: pointId,
+                        vector: embedding,
+                        payload: {
+                            text: text,
+                            source: pdfFile,
+                            page: i
+                        }
+                    }
+                ]
+            });
+            pointId++;
+        }
+    }
+
+    console.log('\nIngestion complete!');
+    const collectionInfo = await client.getCollection(collectionName);
+    console.log(`Total documents in collection: ${collectionInfo.points_count}`);
+}
+
+main().catch(console.error);
+```
+</CodeBlocks>
+  </Tab>
+</Tabs>
+
+Run the script from your terminal:
+
+<Tabs>
+<Tab title="Python" language="python">
+```bash
+python setup.py
+```
+</Tab>
+<Tab title="Typescript" language="typescript">
+```bash
+npx tsx setup.ts
+```
+</Tab>
+</Tabs>
+
+If you are using MongoDB Atlas, you must manually create a vector search index by following the steps below.
+
+<Accordion title="Create the Vector Search Index (MongoDB Atlas Only)">
+<Note>
+**MongoDB Atlas users:** The setup script ingests your data, but MongoDB Atlas requires you to manually create a vector search index before queries will work. Follow these steps carefully.
+</Note>
+
+<Steps>
+  <Step title="Navigate to Atlas Search">
+    Log in to your [MongoDB Atlas dashboard](https://cloud.mongodb.com/), and click on **"Search & Vector Search"** in the sidebar.
+  </Step>
+  <Step title="Create Search Index">
+    Click **"Create Search Index"**, choose Vector Search.
+  </Step>
+  <Step title="Select Database and Collection">
+    - Database: Select **`rag_demo`** (or whatever you set as `MONGODB_DB_NAME`)
+    - Collection: Select **`rag_collection`**
+  </Step>
+  <Step title="Name and Configure Index">
+    - Index Name: Enter **`vector_index`** (this exact name is required by the code)
+    - Choose **"JSON Editor"** (not "Visual Editor"). Click **Next**
+    - Paste this JSON definition:
+    ```json
+    {
+      "fields": [
+        {
+          "type": "vector",
+          "path": "embedding",
+          "numDimensions": 384,
+          "similarity": "cosine"
+        }
+      ]
+    }
+    ```
+    **Note:** 384 dimensions is for Hugging Face's `BAAI/bge-small-en-v1.5` model.
+  </Step>
+  <Step title="Create and Wait">
+    Click **Next**, then click **"Create Search Index"**. The index will take a few minutes to build. Wait until the status shows as **"Active"** before proceeding.
+  </Step>
+</Steps>
+</Accordion>
+
+Your vector database is now populated with research paper content and ready to query.
+
+## Step 2: Create a Simple Letta Agent
+
+For the Simple RAG approach, the Letta agent doesn't need any special tools or complex instructions. Its only job is to answer a question based on the context we provide. We can create this agent programmatically using the Letta SDK.
+
+Create a file named `create_agent.py` or `create_agent.ts`:
+<Tabs>
+<Tab title="Python" language="python">
+```python
+import os
+from letta_client import Letta
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Initialize the Letta client
+client = Letta(token=os.getenv("LETTA_API_KEY"))
+
+# Create the agent
+agent = client.agents.create(
+    name="Simple RAG Agent",
+    description="This agent answers questions based on provided context. It has no tools or special memory.",
+    memory_blocks=[
+        {
+            "label": "persona",
+            "value": "You are a helpful research assistant. Answer the user's question based *only* on the context provided."
+        }
+    ]
+)
+
+print(f"Agent '{agent.name}' created with ID: {agent.id}")
+```
+</Tab>
+<Tab title="Typescript" language="typescript">
+```typescript
+import { LettaClient } from '@letta-ai/letta-client';
+import * as dotenv from 'dotenv';
+
+dotenv.config();
+
+async function main() {
+    // Initialize the Letta client
+    const client = new LettaClient({
+        token: process.env.LETTA_API_KEY || ''
+    });
+
+    // Create the agent
+    const agent = await client.agents.create({
+        name: 'Simple RAG Agent',
+        description: 'This agent answers questions based on provided context. It has no tools or special memory.',
+        memoryBlocks: [
             {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt.format(contexts, validated_question)}
-                ],
+                label: 'persona',
+                value: 'You are a helpful research assistant. Answer the user\'s question based *only* on the context provided.'
             }
         ]
-        llm_response = invoke_llm(messages)
-        return llm_response["content"][0]["text"]
+    });
 
-Python
+    console.log(`Agent '${agent.name}' created with ID: ${agent.id}`);
+}
 
-In this example, we are embedding the entire schema file as context into the prompt because the schema is small and simple.
+main().catch(console.error);
+```
+</Tab>
+</Tabs>
 
-    # Add function to read SQL file
-    def read_schema_file():
-        try:
-            # Get the directory where the lambda function code is located
-            lambda_dir = os.path.dirname(os.path.abspath(__file__))
-            schema_path = os.path.join(lambda_dir, "schema.sql")
-            with open(schema_path, "r") as file:
-                schema_content = file.read()
-            return schema_content
+Run this script once to create the agent in your Letta project.
 
-Python
+<CodeBlocks>
+```bash title="Python"
+python create_agent.py```
 
-For large and complex schemas, you can further enhance the agent’s capabilities by integrating [Amazon Knowledge Bases](https://aws.amazon.com/bedrock/knowledge-bases/) through vector embeddings and semantic search, storing comprehensive schema definitions, table relationships, sample queries, and business context documents. By implementing a retrieval-augmented generation (RAG) approach, the agent first searches the Knowledge Base for contextual information before invoking the generate-query action group function, significantly reducing model inference time.
+```bash title="TypeScript"
+npx tsx create_agent.ts
+```
+</CodeBlocks>
 
-### The execute-query function
+![Simple Agent in Letta UI](/images/simple-agent-ui.png)
 
-The `execute_query` function uses Data API to execute a SQL query against an Aurora PostgreSQL database, taking the SQL query and parameters as inputs. It returns the response from the database. The Data API eliminates the complexity of managing database connections in serverless architectures by providing a secure HTTPS endpoint that handles connection management automatically, removing the need for VPC configurations and connection pools in Lambda functions.
+## Step 3: Query, Format, and Ask
 
-The `lambda_handler` processes an incoming event, extracting parameters and their values into a dictionary. It then retrieves a SQL query from these parameters, replacing newlines with spaces for proper formatting. Finally, it calls the `execute_query` function with the extracted query and parameters to execute the SQL statement. This setup allows for dynamic SQL query execution in a serverless environment, with the ability to pass in different queries and parameters for each invocation of the Lambda function:
+Now we'll write the main script, `simple_rag.py` or `simple_rag.ts`, that ties everything together. This script will:
 
-    def execute_query(query, parameters=None):
-        try:
-            # Base request parameters
-            request_params = {
-                "resourceArn": DB_CLUSTER_ARN,
-                "secretArn": DB_SECRET_ARN,
-                "database": DB_NAME,
-                "sql": query,
+1. Take a user's question.
+2. Query your vector database to find the most relevant document chunks.
+3. Construct a detailed prompt that includes both the user's question and the retrieved context.
+4. Send this combined prompt to our Simple Letta agent and print the response.
+
+<Tabs>
+  <Tab title="ChromaDB" language="chromadb">
+<CodeBlocks>
+```python title="Python"
+import os
+import chromadb
+from letta_client import Letta
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Initialize clients
+letta_client = Letta(token=os.getenv("LETTA_API_KEY"))
+chroma_client = chromadb.CloudClient(
+    tenant=os.getenv("CHROMA_TENANT"),
+    database=os.getenv("CHROMA_DATABASE"),
+    api_key=os.getenv("CHROMA_API_KEY")
+)
+
+AGENT_ID = "your-agent-id"  # Replace with your agent ID
+
+def main():
+    while True:
+        question = input("\nAsk a question about the research papers: ")
+        if question.lower() in ['exit', 'quit']:
+            break
+
+        # 1. Query ChromaDB
+        collection = chroma_client.get_collection("rag_collection")
+        results = collection.query(query_texts=[question], n_results=3)
+        context = "\n".join(results["documents"][0])
+
+        # 2. Construct the prompt
+        prompt = f'''Context from research paper:
+{context}
+
+Question: {question}
+
+Answer:'''
+
+        # 3. Send to Letta Agent
+        response = letta_client.agents.messages.create(
+            agent_id=AGENT_ID,
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        for message in response.messages:
+            if message.message_type == 'assistant_message':
+                print(f"\nAgent: {message.content}")
+
+if __name__ == "__main__":
+    main()
+```
+
+```typescript title="TypeScript"
+import { LettaClient } from '@letta-ai/letta-client';
+import { CloudClient } from 'chromadb';
+import { DefaultEmbeddingFunction } from '@chroma-core/default-embed';
+import * as dotenv from 'dotenv';
+import * as readline from 'readline';
+
+dotenv.config();
+
+const AGENT_ID = 'your-agent-id';  // Replace with your agent ID
+
+// Initialize clients
+const lettaClient = new LettaClient({
+    token: process.env.LETTA_API_KEY || ''
+});
+
+const chromaClient = new CloudClient({
+    apiKey: process.env.CHROMA_API_KEY || '',
+    tenant: process.env.CHROMA_TENANT || '',
+    database: process.env.CHROMA_DATABASE || ''
+});
+
+async function main() {
+    const embedder = new DefaultEmbeddingFunction();
+    const collection = await chromaClient.getCollection({
+        name: 'rag_collection',
+        embeddingFunction: embedder
+    });
+
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+    });
+
+    const askQuestion = () => {
+        rl.question('\nAsk a question about the research papers (or type "exit" to quit): ', async (question) => {
+            if (question.toLowerCase() === 'exit' || question.toLowerCase() === 'quit') {
+                rl.close();
+                return;
             }
-    
-            # Only add parameters if they exist and are not empty
-            if parameters and len(parameters) > 0:
-                request_params["parameters"] = parameters
-    
-            # Execute the query
-            response = rds_data.execute_statement(**request_params)
-            return response
-    
-        except Exception as e:
-            print(f"Error executing query: {str(e)}")
-            raise
 
-Python
-
-Test the solution
------------------
-
-You must create a sample schema with data using [`scripts/create_schema.py`](https://github.com/aws-samples/sample-to-connect-bedrock-agent-with-aurora/blob/main/scripts/create_schema.py) before you can proceed with the testing. This script will create a few schemas and tables and ingest sample data. The test is very straightforward. You first send a natural language prompt as input to the agent, which then has to generate the necessary SQL query and execute the query against the configured Aurora PostgreSQL database using Data API. The agent should then return a response that is based on the results queried from the Aurora PostgreSQL database using Data API. Before you run the [`scripts/create_schema.py`](https://github.com/aws-samples/sample-to-connect-bedrock-agent-with-aurora/blob/main/scripts/create_schema.py) script from your IDE, update it with your `DB_CLUSTER_ARN`, `DB_SECRET_ARN`, `DB_NAME` noted from your RDSAuroraStack CDK deployment output.
-
-    python3 scripts/create_schema.py
-
-Bash
-
-After you’ve created the schema and loaded the test data, there are few ways you can test the deployed agent. One approach is to use the [Amazon Bedrock console](https://console.aws.amazon.com/bedrock/), and the other is to make use of the [InvokeAgent API](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_agent-runtime_InvokeAgent.html).
-
-### Using the test window of Amazon Bedrock Agents
-
-To test the solution using the test window, follow these steps:
-
-1.  On the [Amazon Bedrock Agents console](https://console.aws.amazon.com/bedrock/agents/), on the panel on the right, open the **Test** window.
-2.  Enter your test input for the agent, as shown in the following screenshot.  
-    ![](https://d2908q01vomqb2.cloudfront.net/887309d048beef83ad3eabf2a79a64a389ab1c9f/2025/05/20/image-3-3.png)
-3.  To troubleshoot and review all the steps the agent has used to generate the response, expand the test window and review the **Trace** section, as shown in the following screenshot.
-
-![](https://d2908q01vomqb2.cloudfront.net/887309d048beef83ad3eabf2a79a64a389ab1c9f/2025/05/20/image-4-1.png)
-
-### Using the Amazon Bedrock InvokeAgent API
-
-Another way to test is by using the AWS SDK for InvokeAgent API. Applications use this API for interacting with the agent. You should find a utility script [`scripts/test_agent.py`](https://github.com/aws-samples/sample-to-connect-bedrock-agent-with-aurora/blob/main/scripts/test_agent.py) in the [repository](https://github.com/aws-samples/sample-to-connect-bedrock-agent-with-aurora) to test the agent and the integration with the Aurora PostgreSQL database. Make sure you update the script with the Amazon Bedrock agent ID before you run the script. The test script provides options for you to run with a single test prompt or run with multiple test prompts. You can also run the test with trace enabled to review the steps and reasoning that the agent used to complete the request.
-
-Run a single test without trace:
-
-    python3 scripts/test_agent.py --test-type single
-
-Bash
-
-Run a single test with trace:
-
-    python3 scripts/test_agent.py --test-type single --trace
-
-Bash
-
-Run all tests without trace:
-
-    python3 scripts/test_agent.py --test-type all
-
-Bash
-
-Run all tests with trace:
-
-    python3 scripts/test_agent.py --test-type all --trace
-
-Bash
-
-The following is the sample output from the test, showing the actual data retrieved from the Aurora PostgreSQL database table:
-
-    BEDROCK AGENT TEST RESULTS
-    ==================================================
-    
-    Single Test
-    --------------------------------------------------
-    Prompt: Show me all students and their major department names ?
-    
-    Invoking Agent...
-    
-    Agent Response:
-    Here are the students and their major department names:
-    
-    John Doe - Computer Science 
-    Jane Smith - Physics
-    Alice Johnson - Mathematics
-    
-    ==================================================
-
-Code
-
-The following is the sample output with trace enabled showing all the steps of the agent:BEDROCK AGENT TEST RESULTS
-
-    BEDROCK AGENT TEST RESULTS
-    ==================================================
-    
-    Single Test
-    --------------------------------------------------
-    Prompt: Can you find the members of AI in Education project ?
-    
-    Invoking Agent...
-    
-    Agent Response:
-    The members of the AI in Education project are:
-    
-    Robert Brown - Principal Investigator
-    Emily Davis - Co-Investigator
-    
-    📋 Trace Steps:
-    ================================================================================
-    
-    🔍 Step 1 - Skip printing trace entry:
-    ----------------------------------------
-    
-    🔍 Step 2 - Pre-processing:
-    ----------------------------------------
-    Response:  <category>D>
-    
-    ⚙️ Step 3 - Skip printing trace entry:
-    ----------------------------------------
-    
-    ⚙️ Step 4 - Orchestration:
-    ----------------------------------------
-    Response: To answer this question, I will:
-    
-    1. Call the generate-sql-query::generate-sql function to generate the SQL query to get the members of the "AI in Education" project.
-    
-    2. Call the execute-sql-query::execute-sql function to execute the generated SQL query.
-    
-    3. Return the results from the execute-sql-query function to the user.
-    
-    I have checked that I have access to the generate-sql-query::generate-sql and execute-sql-query::execute-sql functions.
-    
-    </scratchpad>
-    
-    <function_call>
-    generate-sql-query::generate-sql(question="Can you find the members of AI in Education project ?")
-    
-    ⚙️ Step 5 - Skip printing trace entry:
-    ----------------------------------------
-    
-    ⚙️ Step 6 - Orchestration:
-    ----------------------------------------
-    invocationInput: {'actionGroupInvocationInput': {'actionGroupName': 'generate-sql-query', 'executionType': 'LAMBDA', 'function': 'generate-sql', 'parameters': [{'name': 'question', 'type': 'string', 'value': 'Can you find the members of AI in Education project ?'}]}, 'invocationType': 'ACTION_GROUP', 'traceId': '5018e885-ffa2-4a74-ac12-1635c58ceb88-0'}
-    
-    ⚙️ Step 7 - Orchestration:
-    ----------------------------------------
-    Observation: {'actionGroupInvocationOutput': {'text': '{"result": "SELECT e.first_name, e.last_name, pm.role FROM staff.employees e JOIN research.project_members pm ON e.employee_id = pm.employee_id JOIN research.projects p ON pm.project_id = p.project_id WHERE p.title = \'AI in Education\';"}'}, 'traceId': '5018e885-ffa2-4a74-ac12-1635c58ceb88-0', 'type': 'ACTION_GROUP'}
-    
-    ⚙️ Step 8 - Skip printing trace entry:
-    ----------------------------------------
-    
-    ⚙️ Step 9 - Orchestration:
-    ----------------------------------------
-    Response: <scratchpad>
-    I have received the generated SQL query to get members of the "AI in Education" project. I will now call the execute-sql-query::execute-sql function to execute this query.
-    </scratchpad>
-    <function_call>execute-sql-query::execute-sql(query="SELECT e.first_name, e.last_name, pm.role FROM staff.employees e JOIN research.project_members pm ON e.employee_id = pm.employee_id JOIN research.projects p ON pm.project_id = p.project_id WHERE p.title = 'AI in Education';")
-    
-    ⚙️ Step 10 - Skip printing trace entry:
-    ----------------------------------------
-    
-    ⚙️ Step 11 - Orchestration:
-    ----------------------------------------
-    invocationInput: {'actionGroupInvocationInput': {'actionGroupName': 'execute-sql-query', 'executionType': 'LAMBDA', 'function': 'execute-sql', 'parameters': [{'name': 'query', 'type': 'string', 'value': "SELECT e.first_name, e.last_name, pm.role FROM staff.employees e JOIN research.project_members pm ON e.employee_id = pm.employee_id JOIN research.projects p ON pm.project_id = p.project_id WHERE p.title = 'AI in Education';"}]}, 'invocationType': 'ACTION_GROUP', 'traceId': '5018e885-ffa2-4a74-ac12-1635c58ceb88-1'}
-    
-    ⚙️ Step 12 - Orchestration:
-    ----------------------------------------
-    Observation: {'actionGroupInvocationOutput': {'text': '{"result": {"ResponseMetadata": {"RequestId": "2fca6c2c-c29d-4730-84d7-540e92ffe157", "HTTPStatusCode": 200, "HTTPHeaders": {"x-amzn-requestid": "2fca6c2c-c29d-4730-84d7-540e92ffe157", "date": "Wed, 29 Jan 2025 17:42:07 GMT", "content-type": "application/json", "content-length": "285", "connection": "keep-alive"}, "RetryAttempts": 0}, "records": [[{"stringValue": "Robert"}, {"stringValue": "Brown"}, {"stringValue": "Principal Investigator"}], [{"stringValue": "Emily"}, {"stringValue": "Davis"}, {"stringValue": "Co-Investigator"}]], "numberOfRecordsUpdated": 0}}'}, 'traceId': '5018e885-ffa2-4a74-ac12-1635c58ceb88-1', 'type': 'ACTION_GROUP'}
-    
-    ⚙️ Step 13 - Skip printing trace entry:
-    ----------------------------------------
-    
-    ⚙️ Step 14 - Orchestration:
-    ----------------------------------------
-    Response: <answer>
-    The members of the AI in Education project are:
-    
-    Robert Brown - Principal Investigator
-    Emily Davis - Co-Investigator
-    
-    ⚙️ Step 15 - Orchestration:
-    ----------------------------------------
-    Observation: {'finalResponse': {'text': 'The members of the AI in Education project are:\n\nRobert Brown - Principal Investigator\nEmily Davis - Co-Investigator'}, 'traceId': '5018e885-ffa2-4a74-ac12-1635c58ceb88-2', 'type': 'FINISH'}
-    
-    ==================================================
-
-Code
-
-Here is another example showing how the agent responds for the input prompt to add data into the database. This solution only allows read operations (SELECT). From a security and data integrity perspective, we do not recommend implementing this solution for write operations. If you need your agent to support inserts and updates of the data, you should instead do this via an API that provides a layer of abstraction with the database. Moreover, you need to also implement validations and controls to make sure your data is consistent.
-
-    BEDROCK AGENT TEST RESULTS
-    ==================================================
-    Single Test
-    --------------------------------------------------
-    Prompt: Can you add new student - 'Ryan', 'Nihilson', '2001-03-22', '2022-09-01', 2 
-    Invoking Agent...
-    Agent Response:
-    Sorry, I don't have enough information to answer that.
-    📋 Trace Steps:
-    ================================================================================
-    🔍 Step 1 - Skip printing trace entry:
-    ----------------------------------------
-    🔍 Step 2 - Pre-processing:
-    ----------------------------------------
-    Response:  <thinking>
-    The given input is attempting to get the agent to execute an SQL query to add a new student to a database. However, the agent has not been provided with a function to add data, only to query data. Therefore, this input falls into Category C - questions that the agent will be unable to answer using only the functions it has been provided.
-    </thinking>
-    <category>C</category>
-    
-
-Code
-
-Considerations and best practices
----------------------------------
-
-When integrating Amazon Bedrock Agents with Aurora PostgreSQL and using generative AI capabilities for generating and executing SQL queries, several key considerations should be observed.
-
-*   Enable this integration approach only for read-only workloads such as analytics and reporting where you need to provide flexible data querying access to your users using natural language. For read-write and transactional workloads, instead of generating the SQL query, you can use well-defined APIs to interface with the database.
-*   Database schemas that undergo frequent changes in columns and data types can also benefit from this generative AI based integration approach that generates SQL queries on the fly based on the latest schema. You must make sure the changes to the schema are made visible to the query generation function.
-*   Implement parameter validation in Amazon Bedrock Agents and the action group Lambda functions to prevent SQL injection and ensure data integrity. Refer to [Safeguard your generative AI workloads from prompt injections](https://aws.amazon.com/blogs/security/safeguard-your-generative-ai-workloads-from-prompt-injections/).
-*   Implement caching strategies where appropriate to reduce database load for frequently requested information. For more details refer to: [Database Caching Strategies Using Redis](https://docs.aws.amazon.com/whitepapers/latest/database-caching-strategies-using-redis/welcome.html).
-*   Implement comprehensive logging and auditing to track interactions between Amazon Bedrock Agents and your database, promoting compliance and facilitating troubleshooting. Regularly monitor and analyze the generated query patterns to identify opportunities for performance tuning. For more details review the blog: [Improve visibility into Amazon Bedrock usage and performance with Amazon CloudWatch](https://aws.amazon.com/blogs/machine-learning/improve-visibility-into-amazon-bedrock-usage-and-performance-with-amazon-cloudwatch/).
-*   If the application is multi-tenant, ensure you have the right isolation controls. For details on implementing row-level security with the Data API see [Enforce row-level security with the RDS Data API.](https://aws.amazon.com/blogs/database/enforce-row-level-security-with-the-rds-data-api/)
-*   If you are looking for a managed implementation of text to SQL query generation functionality, then you can make use of the [GenerateQuery](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_agent-runtime_GenerateQuery.html) API supported with the Bedrock Knowledge Base.
-
-Clean up
---------
-
-To avoid incurring future charges, delete all the resources created through CDK.
-
-    cdk destroy --all
-
-Code
-
-Conclusion
-----------
-
-In this post, we demonstrated how to integrate Amazon Bedrock Agents and Aurora PostgreSQL using RDS Data API, enabling natural language interactions with your database. This solution showcases how AWS services can be combined to streamline database interactions through AI-driven interfaces, making data more accessible to nontechnical users. The integration pattern can be extended to support more complex use cases, such as automated reporting, natural language–based data exploration, and intelligent database monitoring.
-
-We encourage you to try this solution in your environment and share your experiences. For additional support and resources, visit our [repository](https://github.com/aws-samples/sample-to-connect-bedrock-agent-with-aurora).
-
-* * *
-
-### About the authors
-
-![](https://d2908q01vomqb2.cloudfront.net/887309d048beef83ad3eabf2a79a64a389ab1c9f/2021/12/20/Nihilson-Gnanadason.jpg)**Nihilson Gnanadason** is a Senior Solutions Architect at Amazon Web Services (AWS). He works with ISVs in the UK to build, run, and scale their software products on AWS.
-
-![](https://d2908q01vomqb2.cloudfront.net/887309d048beef83ad3eabf2a79a64a389ab1c9f/2025/05/20/skmohan.jpg)**Senthil Mohan** is a Solutions Architect at AWS working with EMEA customers, helping them migrate, modernize, and optimize their SaaS workloads for the AWS Cloud.
-
-Like (4)(4)
-
-Share
-
-Comments
---------
-
-Log in to commentLog in
-
-* * *
-
-[![](//d1.awsstatic.com/Digital%20Marketing/House/Editorial/other/SiteMerch-3066-Podcast_Editorial.65839609a8dda387937ed07dc8dc4f3c3b870546.png)
-
-AWS Podcast
-
-Subscribe for weekly AWS news and interviews
-
-Learn more](https://aws.amazon.com/podcasts/aws-podcast/?sc_icampaign=aware_aws-podcast&sc_ichannel=ha&sc_icontent=awssm-2021&sc_iplace=blog_tile&trk=ha_awssm-2021) 
-
-[![](//d1.awsstatic.com/webteam/homepage/editorials/Site-Merch_APN_Editorial.12df33fb7e0299389b086fb48dba7b9deeef07df.png)
-
-AWS Partner Network
-
-Find an APN member to support your cloud business needs
-
-Learn more](https://aws.amazon.com/partners/find/?sc_icampaign=aware_apn_recruit&sc_ichannel=ha&sc_icontent=awssm-2021&sc_iplace=blog_tile&trk=ha_awssm-2021) 
-
-[![](//d1.awsstatic.com/webteam/homepage/editorials/Site-Merch_Training_Editorial.5cc72ab0552ba66ef4e36a1a60ee742bc31113c7.png)
-
-AWS Training & Certifications
-
-Free digital courses to help you develop your skills
-
-Learn more](https://aws.amazon.com/training/?sc_icampaign=aware_aws-training_blog&sc_ichannel=ha&sc_icontent=awssm-2021&sc_iplace=blog_tile&trk=ha_awssm-2021)
+            // 1. Query ChromaDB
+            const results = await collection.query({
+                queryTexts: [question],
+                nResults: 3
+            });
+
+            const context = results.documents[0].join('\n');
+
+            // 2. Construct the prompt
+            const prompt = `Context from research paper:
+${context}
+
+Question: ${question}
+
+Answer:`;
+
+            // 3. Send to Letta Agent
+            const response = await lettaClient.agents.messages.create(AGENT_ID, {
+                messages: [{ role: 'user', content: prompt }]
+            });
+
+            for (const message of response.messages) {
+                if (message.messageType === 'assistant_message') {
+                    console.log(`\nAgent: ${(message as any).content}`);
+                }
+            }
+
+            askQuestion();
+        });
+    };
+
+    askQuestion();
+}
+
+main().catch(console.error);
+```
+</CodeBlocks>
+  </Tab>
+
+  <Tab title="MongoDB Atlas" language="mongo">
+<CodeBlocks>
+```python title="Python"
+import os
+import pymongo
+import requests
+import certifi
+from letta_client import Letta
+from dotenv import load_dotenv
+
+load_dotenv()
+
+def get_embedding(text, api_key):
+    """Get embedding from Hugging Face Inference API"""
+    API_URL = "https://router.huggingface.co/hf-inference/models/BAAI/bge-small-en-v1.5"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    response = requests.post(API_URL, headers=headers, json={"inputs": [text], "options": {"wait_for_model": True}})
+
+    if response.status_code == 200:
+        return response.json()[0]
+    else:
+        raise Exception(f"HuggingFace API error: {response.status_code} - {response.text}")
+
+# Initialize clients
+letta_client = Letta(token=os.getenv("LETTA_API_KEY"))
+mongo_client = pymongo.MongoClient(os.getenv("MONGODB_URI"), tlsCAFile=certifi.where())
+db = mongo_client[os.getenv("MONGODB_DB_NAME")]
+collection = db["rag_collection"]
+hf_api_key = os.getenv("HF_API_KEY")
+
+AGENT_ID = "your-agent-id"  # Replace with your agent ID
+
+def main():
+    while True:
+        question = input("\nAsk a question about the research papers: ")
+        if question.lower() in ['exit', 'quit']:
+            break
+
+        # 1. Query MongoDB Atlas Vector Search
+        query_embedding = get_embedding(question, hf_api_key)
+
+        results = collection.aggregate([
+            {
+                "$vectorSearch": {
+                    "index": "vector_index",
+                    "path": "embedding",
+                    "queryVector": query_embedding,
+                    "numCandidates": 100,
+                    "limit": 3
+                }
+            },
+            {
+                "$project": {
+                    "text": 1,
+                    "source": 1,
+                    "page": 1,
+                    "score": {"$meta": "vectorSearchScore"}
+                }
+            }
+        ])
+
+        contexts = [doc.get("text", "") for doc in results]
+        context = "\n\n".join(contexts)
+
+        # 2. Construct the prompt
+        prompt = f'''Context from research paper:
+{context}
+
+Question: {question}
+
+Answer:'''
+
+        # 3. Send to Letta Agent
+        response = letta_client.agents.messages.create(
+            agent_id=AGENT_ID,
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        for message in response.messages:
+            if message.message_type == 'assistant_message':
+                print(f"\nAgent: {message.content}")
+
+if __name__ == "__main__":
+    main()
+```
+
+```typescript title="TypeScript"
+import { LettaClient } from '@letta-ai/letta-client';
+import { MongoClient } from 'mongodb';
+import * as dotenv from 'dotenv';
+import * as readline from 'readline';
+import fetch from 'node-fetch';
+
+dotenv.config();
+
+const AGENT_ID = 'your-agent-id';  // Replace with your agent ID
+
+async function getEmbedding(text: string, apiKey: string): Promise<number[]> {
+    const API_URL = "https://router.huggingface.co/hf-inference/models/BAAI/bge-small-en-v1.5";
+    const headers = {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+    };
+
+    const response = await fetch(API_URL, {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify({
+            inputs: [text],
+            options: { wait_for_model: true }
+        })
+    });
+
+    if (response.ok) {
+        const result: any = await response.json();
+        return result[0];
+    } else {
+        const errorText = await response.text();
+        throw new Error(`HuggingFace API error: ${response.status} - ${errorText}`);
+    }
+}
+
+async function main() {
+    const lettaApiKey = process.env.LETTA_API_KEY || '';
+    const mongoUri = process.env.MONGODB_URI || '';
+    const dbName = process.env.MONGODB_DB_NAME || '';
+    const hfApiKey = process.env.HF_API_KEY || '';
+
+    if (!lettaApiKey || !mongoUri || !dbName || !hfApiKey) {
+        console.error('Error: Ensure LETTA_API_KEY, MONGODB_URI, MONGODB_DB_NAME, and HF_API_KEY are in .env file');
+        return;
+    }
+
+    // Initialize clients
+    const lettaClient = new LettaClient({
+        token: lettaApiKey
+    });
+
+    const mongoClient = new MongoClient(mongoUri);
+    await mongoClient.connect();
+    console.log('Connected to MongoDB Atlas\n');
+
+    const db = mongoClient.db(dbName);
+    const collection = db.collection('rag_collection');
+
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+    });
+
+    const askQuestion = () => {
+        rl.question('\nAsk a question about the research papers (or type "exit" to quit): ', async (question) => {
+            if (question.toLowerCase() === 'exit' || question.toLowerCase() === 'quit') {
+                await mongoClient.close();
+                rl.close();
+                return;
+            }
+
+            try {
+                // 1. Query MongoDB Atlas Vector Search
+                const queryEmbedding = await getEmbedding(question, hfApiKey);
+
+                const results = collection.aggregate([
+                    {
+                        $vectorSearch: {
+                            index: 'vector_index',
+                            path: 'embedding',
+                            queryVector: queryEmbedding,
+                            numCandidates: 100,
+                            limit: 3
+                        }
+                    },
+                    {
+                        $project: {
+                            text: 1,
+                            source: 1,
+                            page: 1,
+                            score: { $meta: 'vectorSearchScore' }
+                        }
+                    }
+                ]);
+
+                const docs = await results.toArray();
+                const contexts = docs.map(doc => doc.text || '');
+                const context = contexts.join('\n\n');
+
+                // 2. Construct the prompt
+                const prompt = `Context from research paper:
+${context}
+
+Question: ${question}
+
+Answer:`;
+
+                // 3. Send to Letta Agent
+                const response = await lettaClient.agents.messages.create(AGENT_ID, {
+                    messages: [{ role: 'user', content: prompt }]
+                });
+
+                for (const message of response.messages) {
+                    if (message.messageType === 'assistant_message') {
+                        console.log(`\nAgent: ${(message as any).content}`);
+                    }
+                }
+
+            } catch (error) {
+                console.error('Error:', error);
+            }
+
+            askQuestion();
+        });
+    };
+
+    askQuestion();
+}
+
+main().catch(console.error);
+```
+</CodeBlocks>
+  </Tab>
+
+  <Tab title="Qdrant" language="qdrant">
+<CodeBlocks>
+```python title="Python"
+import os
+import requests
+from letta_client import Letta
+from dotenv import load_dotenv
+from qdrant_client import QdrantClient
+
+load_dotenv()
+
+def get_embedding(text, api_key):
+    """Get embedding from Hugging Face Inference API"""
+    API_URL = "https://router.huggingface.co/hf-inference/models/BAAI/bge-small-en-v1.5"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    response = requests.post(API_URL, headers=headers, json={"inputs": text, "options": {"wait_for_model": True}})
+
+    if response.status_code == 200:
+        return response.json()
+    else:
+        raise Exception(f"HuggingFace API error: {response.status_code} - {response.text}")
+
+# Initialize clients
+letta_client = Letta(token=os.getenv("LETTA_API_KEY"))
+qdrant_client = QdrantClient(
+    url=os.getenv("QDRANT_URL"),
+    api_key=os.getenv("QDRANT_API_KEY")
+)
+hf_api_key = os.getenv("HF_API_KEY")
+
+AGENT_ID = "your-agent-id"  # Replace with your agent ID
+
+def main():
+    while True:
+        question = input("\nAsk a question about the research papers: ")
+        if question.lower() in ['exit', 'quit']:
+            break
+
+        # 1. Query Qdrant
+        query_embedding = get_embedding(question, hf_api_key)
+
+        results = qdrant_client.query_points(
+            collection_name="rag_collection",
+            query=query_embedding,
+            limit=3
+        )
+
+        contexts = [hit.payload["text"] for hit in results.points]
+        context = "\n".join(contexts)
+
+        # 2. Construct the prompt
+        prompt = f'''Context from research paper:
+{context}
+
+Question: {question}
+
+Answer:'''
+
+        # 3. Send to Letta Agent
+        response = letta_client.agents.messages.create(
+            agent_id=AGENT_ID,
+            messages=[{"role": "user", "content": prompt}]
+        )
+
+        for message in response.messages:
+            if message.message_type == 'assistant_message':
+                print(f"\nAgent: {message.content}")
+
+if __name__ == "__main__":
+    main()
+```
+
+```typescript title="TypeScript"
+import { QdrantClient } from '@qdrant/js-client-rest';
+import { LettaClient } from '@letta-ai/letta-client';
+import dotenv from 'dotenv';
+import fetch from 'node-fetch';
+import * as readline from 'readline';
+
+dotenv.config();
+
+async function getEmbedding(text: string, apiKey: string): Promise<number[]> {
+    const API_URL = "https://router.huggingface.co/hf-inference/models/BAAI/bge-small-en-v1.5";
+
+    const response = await fetch(API_URL, {
+        method: 'POST',
+        headers: {
+            "Authorization": `Bearer ${apiKey}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            inputs: [text],
+            options: { wait_for_model: true }
+        })
+    });
+
+    if (response.ok) {
+        const result: any = await response.json();
+        return result[0];
+    } else {
+        const error = await response.text();
+        throw new Error(`HuggingFace API error: ${response.status} - ${error}`);
+    }
+}
+
+async function main() {
+    // Initialize clients
+    const lettaClient = new LettaClient({
+        token: process.env.LETTA_API_KEY || ''
+    });
+
+    const qdrantClient = new QdrantClient({
+        url: process.env.QDRANT_URL || '',
+        apiKey: process.env.QDRANT_API_KEY || ''
+    });
+
+    const hfApiKey = process.env.HF_API_KEY || '';
+    const AGENT_ID = 'your-agent-id';  // Replace with your agent ID
+
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+    });
+
+    const askQuestion = (query: string): Promise<string> => {
+        return new Promise((resolve) => {
+            rl.question(query, resolve);
+        });
+    };
+
+    while (true) {
+        const question = await askQuestion('\nAsk a question about the research papers (or type "exit" to quit): ');
+
+        if (question.toLowerCase() === 'exit' || question.toLowerCase() === 'quit') {
+            rl.close();
+            break;
+        }
+
+        // 1. Query Qdrant
+        const queryEmbedding = await getEmbedding(question, hfApiKey);
+
+        const results = await qdrantClient.query(
+            'rag_collection',
+            {
+                query: queryEmbedding,
+                limit: 3,
+                with_payload: true
+            }
+        );
+
+        const contexts = results.points.map((hit: any) => hit.payload.text);
+        const context = contexts.join('\n');
+
+        // 2. Construct the prompt
+        const prompt = `Context from research paper:
+${context}
+
+Question: ${question}
+
+Answer:`;
+
+        // 3. Send to Letta Agent
+        const response = await lettaClient.agents.messages.create(AGENT_ID, {
+            messages: [{ role: 'user', content: prompt }]
+        });
+
+        for (const message of response.messages) {
+            if (message.messageType === 'assistant_message') {
+                console.log(`\nAgent: ${(message as any).content}`);
+            }
+        }
+    }
+}
+
+main().catch(console.error);
+```
+</CodeBlocks>
+  </Tab>
+</Tabs>
+
+<Note>
+Replace `your-agent-id` with the actual ID of the agent you created in the previous step.
+</Note>
+
+When you run this script, your application performs the retrieval, and the Letta agent provides the answer based on the context it receives. This gives you full control over the data pipeline.
+
+## Next Steps
+
+Now that you've integrated Simple RAG with Letta, you can explore more advanced integration patterns:
+
+<CardGroup cols={2}>
+  <Card
+    title="Agentic RAG"
+    icon="fa-sharp fa-light fa-robot"
+    href="/guides/rag/agentic"
+    iconPosition="left"
+  >
+    Learn how to empower your agent with custom search tools for autonomous retrieval.
+  </Card>
+  <Card
+    title="Custom Tools"
+    icon="fa-sharp fa-light fa-wrench"
+    href="/guides/agents/custom-tools"
+    iconPosition="left"
+  >
+    Explore creating more advanced custom tools for your agents.
+  </Card>
+</CardGroup>
