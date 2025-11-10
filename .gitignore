@@ -1,5 +1,5 @@
-# Ignore godot-docs on main branch
-official-docs/godot-docs/
+# Ignore godot-docs on main branch (not on completed-workflow branch)
+# official-docs/godot-docs/
 
 # macOS
 .DS_Store
